@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-ap-northeast-1}
+    volumes:
+      - ./app.py:/app/app.py:ro
+      # EC2インスタンスプロファイルの認証情報を使用
+      - ~/.aws:/home/appuser/.aws:ro
+    restart: unless-stopped
