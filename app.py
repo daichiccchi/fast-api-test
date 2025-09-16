@@ -1,6 +1,7 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+import json
 import boto3
 from botocore.auth import SigV4Auth
 from botocore.awsrequest import AWSRequest
@@ -134,39 +135,49 @@ async def call_api_gateway(request: APIGatewayRequest):
 
 @app.post("/bucket")
 async def upload_to_s3(
-    request: S3UploadRequest,
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
+    request: str = Form(...)
 ):
     """
     Upload a file to S3 bucket.
     """
     try:
-        logger.info(f"Uploading to S3: {request.bucket_name}/{request.object_key}")
+        # Parse the JSON string from form data
+        try:
+            request_data = json.loads(request)
+            bucket_name = request_data["bucket_name"]
+            object_key = request_data["object_key"]
+            region = request_data.get("region", "ap-northeast-1")
+            assume_role_arn = request_data.get("assume_role_arn")
+        except (json.JSONDecodeError, KeyError) as e:
+            raise HTTPException(status_code=400, detail=f"Invalid request format: {str(e)}")
+
+        logger.info(f"Uploading to S3: {bucket_name}/{object_key}")
 
         # Get credentials (optionally assume role)
-        if request.assume_role_arn:
+        if assume_role_arn:
             sts = boto3.client('sts')
             assumed_role = sts.assume_role(
-                RoleArn=request.assume_role_arn,
+                RoleArn=assume_role_arn,
                 RoleSessionName=f"s3-upload-{datetime.now().strftime('%Y%m%d%H%M%S')}"
             )
             s3_client = boto3.client(
                 's3',
-                region_name=request.region,
+                region_name=region,
                 aws_access_key_id=assumed_role['Credentials']['AccessKeyId'],
                 aws_secret_access_key=assumed_role['Credentials']['SecretAccessKey'],
                 aws_session_token=assumed_role['Credentials']['SessionToken']
             )
         else:
-            s3_client = boto3.client('s3', region_name=request.region)
+            s3_client = boto3.client('s3', region_name=region)
 
         # Read file content
         file_content = await file.read()
 
         # Upload to S3
         response = s3_client.put_object(
-            Bucket=request.bucket_name,
-            Key=request.object_key,
+            Bucket=bucket_name,
+            Key=object_key,
             Body=file_content,
             ContentType=file.content_type or 'application/octet-stream'
         )
@@ -175,8 +186,8 @@ async def upload_to_s3(
 
         return {
             "message": "File uploaded successfully",
-            "bucket": request.bucket_name,
-            "key": request.object_key,
+            "bucket": bucket_name,
+            "key": object_key,
             "etag": response.get('ETag'),
             "version_id": response.get('VersionId')
         }
