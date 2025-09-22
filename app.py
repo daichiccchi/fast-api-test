@@ -215,6 +215,82 @@ async def test_credentials():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/debug-apigw")
+async def debug_api_gateway(request: APIGatewayRequest):
+    """
+    Debug API Gateway request with detailed logging.
+    """
+    try:
+        logger.info(f"Debug: Calling API Gateway: {request.api_gateway_url}")
+
+        # Get credentials (optionally assume role)
+        credentials = get_credentials(request.assume_role_arn)
+
+        # Debug credentials (show partial keys for security)
+        logger.info(f"Debug: Access Key ID (first 10 chars): {credentials.access_key[:10] if credentials.access_key else 'None'}")
+        logger.info(f"Debug: Access Key ID (last 4 chars): {credentials.access_key[-4:] if credentials.access_key else 'None'}")
+        logger.info(f"Debug: Has Session Token: {bool(credentials.token)}")
+
+        # Log current identity
+        sts = boto3.client('sts')
+        identity = sts.get_caller_identity()
+        logger.info(f"Debug: Current identity: {identity}")
+
+        # Parse the URL to get the host
+        from urllib.parse import urlparse
+        parsed_url = urlparse(request.api_gateway_url)
+        host = parsed_url.netloc
+        path = parsed_url.path or '/'
+
+        # Prepare the request
+        headers = {
+            'Host': host,
+            'Content-Type': 'application/json' if request.body else 'text/plain'
+        }
+
+        # Create AWS request for signing
+        aws_request = AWSRequest(
+            method=request.method,
+            url=request.api_gateway_url,
+            data=request.body,
+            headers=headers
+        )
+
+        # Sign the request
+        SigV4Auth(credentials, 'execute-api', request.region).add_auth(aws_request)
+
+        # Log the authorization header for debugging
+        auth_header = aws_request.headers.get('Authorization', '')
+        logger.info(f"Debug: Authorization header: {auth_header}")
+
+        # Make the actual request
+        response = requests.request(
+            method=request.method,
+            url=request.api_gateway_url,
+            headers=dict(aws_request.headers),
+            data=request.body,
+            timeout=30
+        )
+
+        return {
+            "current_identity": identity,
+            "status_code": response.status_code,
+            "response_headers": dict(response.headers),
+            "response_body": response.text,
+            "request_headers_sent": dict(aws_request.headers),
+            "authorization_header": auth_header,
+            "credentials_used": {
+                "access_key_prefix": credentials.access_key if credentials.access_key else None,
+                "access_key_suffix": credentials.access_key if credentials.access_key else None,
+                "has_token": bool(credentials.token)
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Debug request failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
