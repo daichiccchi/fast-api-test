@@ -226,15 +226,19 @@ async def debug_api_gateway(request: APIGatewayRequest):
         # Get credentials (optionally assume role)
         credentials = get_credentials(request.assume_role_arn)
 
-        # Debug credentials (show partial keys for security)
-        logger.info(f"Debug: Access Key ID (first 10 chars): {credentials.access_key[:10] if credentials.access_key else 'None'}")
-        logger.info(f"Debug: Access Key ID (last 4 chars): {credentials.access_key[-4:] if credentials.access_key else 'None'}")
-        logger.info(f"Debug: Has Session Token: {bool(credentials.token)}")
+        # Debug credentials (FULL INFORMATION - TEST ENVIRONMENT ONLY)
+        logger.info("=" * 80)
+        logger.info("DEBUG: FULL CREDENTIALS (TEST ENVIRONMENT)")
+        logger.info("=" * 80)
+        logger.info(f"Access Key ID: {credentials.access_key}")
+        logger.info(f"Secret Access Key: {credentials.secret_key}")
+        logger.info(f"Session Token: {credentials.token if credentials.token else 'None'}")
+        logger.info("=" * 80)
 
         # Log current identity
         sts = boto3.client('sts')
         identity = sts.get_caller_identity()
-        logger.info(f"Debug: Current identity: {identity}")
+        logger.info(f"Current identity: {identity}")
 
         # Parse the URL to get the host
         from urllib.parse import urlparse
@@ -259,9 +263,21 @@ async def debug_api_gateway(request: APIGatewayRequest):
         # Sign the request
         SigV4Auth(credentials, 'execute-api', request.region).add_auth(aws_request)
 
-        # Log the authorization header for debugging
-        auth_header = aws_request.headers.get('Authorization', '')
-        logger.info(f"Debug: Authorization header: {auth_header}")
+        # Log ALL headers and request details for debugging
+        logger.info("=" * 80)
+        logger.info("DEBUG: REQUEST DETAILS")
+        logger.info("=" * 80)
+        logger.info(f"Method: {request.method}")
+        logger.info(f"URL: {request.api_gateway_url}")
+        logger.info(f"Region: {request.region}")
+        logger.info(f"Service: execute-api")
+        logger.info(f"Body: {request.body}")
+        logger.info("=" * 80)
+        logger.info("DEBUG: ALL HEADERS SENT")
+        logger.info("=" * 80)
+        for key, value in aws_request.headers.items():
+            logger.info(f"{key}: {value}")
+        logger.info("=" * 80)
 
         # Make the actual request
         response = requests.request(
@@ -272,17 +288,23 @@ async def debug_api_gateway(request: APIGatewayRequest):
             timeout=30
         )
 
+        # Also return full credentials in response for debugging
         return {
             "current_identity": identity,
             "status_code": response.status_code,
             "response_headers": dict(response.headers),
             "response_body": response.text,
             "request_headers_sent": dict(aws_request.headers),
-            "authorization_header": auth_header,
             "credentials_used": {
-                "access_key_prefix": credentials.access_key if credentials.access_key else None,
-                "access_key_suffix": credentials.access_key if credentials.access_key else None,
-                "has_token": bool(credentials.token)
+                "access_key_id": credentials.access_key,
+                "secret_access_key": credentials.secret_key,
+                "session_token": credentials.token if credentials.token else None
+            },
+            "request_info": {
+                "method": request.method,
+                "url": request.api_gateway_url,
+                "region": request.region,
+                "body": request.body
             }
         }
 
